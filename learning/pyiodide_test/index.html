@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>Pyodide Test</title>
+    <link rel="icon" type="image/x-icon"
+        href="data:image/x-icon;base64,AAABAAEAEBAQAAEABAAoAQAAFgAAACgAAAAQAAAAIAAAAAEABAAAAAAAgAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAA/4QAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEREQAAAAAAEAAAEAAAAAEAAAABAAAAEAAAAAAQAAAQAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAEAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//wAA//8AAP//AAD8HwAA++8AAPvvAAD77wAA++8AAPvvAAD77wAA++8AAP//AAD//wAA//8AAP//AAD//wAA">
+    <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+    <style>
+        #videoInput {
+            width: 640px;
+            height: 480px;
+            margin: 10px;
+            display: block;
+        }
+
+        #canvasOutput {
+            width: 640px;
+            height: 480px;
+            margin: 10px;
+            border: 1px solid #000;
+        }
+    </style>
+</head>
+
+<body>
+    <h1>Pyodide Test Page</h1>
+    <div id="output"></div>
+    <video id="videoInput" autoplay playsinline></video>
+    <canvas id="canvasOutput"></canvas>
+
+    <script>
+        async function initPyodide() {
+            try {
+                let pyodide = await loadPyodide();
+                console.log("Pyodide loaded successfully!");
+
+                await pyodide.loadPackage("opencv-python");
+
+                const video = document.getElementById('videoInput');
+                const canvas = document.getElementById('canvasOutput');
+                const context = canvas.getContext('2d');
+
+                const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+                video.srcObject = stream;
+                video.play();
+
+                video.addEventListener('loadedmetadata', () => {
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                });
+
+                pyodide.runPython(`
+                    import sys
+                    from js import document
+                    
+                    def custom_print(*args, **kwargs):
+                        output = " ".join(str(arg) for arg in args)
+                        element = document.getElementById("output")
+                        element.innerHTML += output + "<br>"
+                    
+                    sys.stdout.write = custom_print
+                `);
+
+                pyodide.runPython(`
+                    import cv2
+                    import numpy as np
+                    from js import videoInput, canvasOutput, context
+                    
+                    def process_frame():
+                        context.drawImage(videoInput, 0, 0, canvasOutput.width, canvasOutput.height)
+                        frame_data = context.getImageData(0, 0, canvasOutput.width, canvasOutput.height).data
+                        
+                        frame = np.array(frame_data).reshape((canvasOutput.height, canvasOutput.width, 4))
+                        
+                        frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+                        
+                        edges = cv2.Canny(frame, 100, 200)
+                        
+                        edges_color = cv2.cvtColor(edges, cv2.COLOR_GRAY2RGBA)
+                        
+                        img_data = edges_color.tobytes()
+                        context.putImageData(new ImageData(new Uint8ClampedArray(img_data), 
+                                                         canvasOutput.width, 
+                                                         canvasOutput.height), 0, 0)
+                    
+                    print('OpenCV processing ready!')
+                `);
+
+                function processVideo() {
+                    pyodide.runPython('process_frame()');
+                    requestAnimationFrame(processVideo);
+                }
+
+                processVideo();
+
+            } catch (error) {
+                console.error("Error:", error);
+                document.getElementById("output").innerHTML += `<br>Error: ${error}<br>`;
+            }
+        }
+
+        initPyodide();
+    </script>
+</body>
+
+</html>
